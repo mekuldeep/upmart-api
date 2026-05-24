@@ -318,19 +318,35 @@ def list_products_public(
         variants_data = []
         for v in p.variants:
             v_images = [{"id": i.id, "url": f"/uploads/products/{i.filename}", "is_primary": i.is_primary} for i in v.images]
-            variants_data.append({"id": v.id, "name": v.name, "images": v_images})
+            variants_data.append({
+                "id": v.id, 
+                "name": v.name, 
+                "price": float(v.price) if v.price else float(p.price),
+                "stock": v.stock,
+                "images": v_images
+            })
 
         product_images = [{"id": i.id, "url": f"/uploads/products/{i.filename}", "is_primary": i.is_primary} for i in p.images if not i.variant_id]
         
+        # Primary image logic (Global across product and variants)
+        # 1. Product-level image marked as primary
+        # 2. Variant-level image marked as primary
+        # 3. Fallback to first product-level image
+        # 4. Fallback to first image of first variant
         primary_image = next((img for img in product_images if img['is_primary']), None)
-        if not primary_image and variants_data:
+        if not primary_image:
             for v in variants_data:
                 primary_image = next((img for img in v['images'] if img['is_primary']), None)
                 if primary_image: break
-            if not primary_image and variants_data and variants_data[0]['images']:
-                primary_image = variants_data[0]['images'][0]
-        if not primary_image and product_images:
-            primary_image = product_images[0]
+        
+        if not primary_image:
+            if product_images:
+                primary_image = product_images[0]
+            elif variants_data:
+                for v in variants_data:
+                    if v['images']:
+                        primary_image = v['images'][0]
+                        break
         
         products_data.append({
             "id": p.id,
@@ -345,10 +361,11 @@ def list_products_public(
             "min_order_qty": p.min_order_qty,
             "is_group_order_enabled": p.is_group_order_enabled,
             "group_size": p.group_size,
+            "sizes": p.sizes or [],
             "variants": variants_data,
             "images": product_images,
             "primary_image": primary_image,
-            "in_stock": p.stock > 0,
+            "in_stock": p.stock > 0 or (any(v.stock > 0 for v in p.variants) if p.variants else False),
             "created_at": p.created_at,
         })
     
@@ -374,19 +391,31 @@ def get_product_public(product_id: int, db: Session = Depends(get_db)):
     variants_data = []
     for v in product.variants:
         v_images = [{"id": i.id, "url": f"/uploads/products/{i.filename}", "is_primary": i.is_primary} for i in v.images]
-        variants_data.append({"id": v.id, "name": v.name, "images": v_images})
+        variants_data.append({
+            "id": v.id, 
+            "name": v.name, 
+            "price": float(v.price) if v.price else float(product.price),
+            "stock": v.stock,
+            "images": v_images
+        })
 
     product_images = [{"id": i.id, "url": f"/uploads/products/{i.filename}", "is_primary": i.is_primary} for i in product.images if not i.variant_id]
     
+    # Primary image logic (re-using same consolidated logic)
     primary_image = next((img for img in product_images if img['is_primary']), None)
-    if not primary_image and variants_data:
+    if not primary_image:
         for v in variants_data:
             primary_image = next((img for img in v['images'] if img['is_primary']), None)
             if primary_image: break
-        if not primary_image and variants_data and variants_data[0]['images']:
-            primary_image = variants_data[0]['images'][0]
-    if not primary_image and product_images:
-        primary_image = product_images[0]
+    
+    if not primary_image:
+        if product_images:
+            primary_image = product_images[0]
+        elif variants_data:
+            for v in variants_data:
+                if v['images']:
+                    primary_image = v['images'][0]
+                    break
     
     # Related products (same category)
     related = []
@@ -411,7 +440,7 @@ def get_product_public(product_id: int, db: Session = Depends(get_db)):
                 "price": float(rp.price),
                 "primary_image": rp_primary,
                 "stock": rp.stock,
-                "in_stock": rp.stock > 0,
+                "in_stock": rp.stock > 0 or (any(v.stock > 0 for v in rp.variants) if rp.variants else False),
             })
     
     return {
@@ -429,6 +458,7 @@ def get_product_public(product_id: int, db: Session = Depends(get_db)):
             "min_order_qty": product.min_order_qty,
             "is_group_order_enabled": product.is_group_order_enabled,
             "group_size": product.group_size,
+            "sizes": product.sizes or [],
             "variants": variants_data,
             "images": product_images,
             "primary_image": primary_image,
@@ -530,17 +560,36 @@ def place_order(
                     detail=f"Quantity for '{product.name}' must be in multiples of {product.group_size}"
                 )
         
-        if product.stock < item_data.quantity:
+        # Check variant if provided
+        target_price = float(product.price)
+        target_stock = product.stock
+        variant_id = None
+
+        if item_data.variant_name:
+            variant = db.query(models.ProductVariant).filter(
+                models.ProductVariant.product_id == product.id,
+                models.ProductVariant.name == item_data.variant_name
+            ).first()
+            if variant:
+                if variant.price:
+                    target_price = float(variant.price)
+                target_stock = variant.stock
+                variant_id = variant.id
+            else:
+                raise HTTPException(status_code=400, detail=f"Variant '{item_data.variant_name}' not found for '{product.name}'")
+
+        if target_stock < item_data.quantity:
             raise HTTPException(
                 status_code=400,
-                detail=f"Insufficient stock for '{product.name}'. Available: {product.stock}"
+                detail=f"Insufficient stock for '{product.name}'{f' ({item_data.variant_name})' if item_data.variant_name else ''}. Available: {target_stock}"
             )
         
-        line_total = float(product.price) * item_data.quantity
+        line_total = target_price * item_data.quantity
         processed_items.append({
             'product': product,
+            'variant_id': variant_id,
             'quantity': item_data.quantity,
-            'unit_price': float(product.price),
+            'unit_price': target_price,
             'line_total': line_total,
         })
         subtotal += line_total
@@ -586,7 +635,12 @@ def place_order(
         )
         db.add(order_item)
         # Reduce stock
-        pi['product'].stock -= pi['quantity']
+        if pi['variant_id']:
+            variant = db.query(models.ProductVariant).filter(models.ProductVariant.id == pi['variant_id']).first()
+            if variant:
+                variant.stock -= pi['quantity']
+        else:
+            pi['product'].stock -= pi['quantity']
     
     # Create payment record
     payment = models.Payment(

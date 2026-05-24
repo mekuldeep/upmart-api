@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Numeric, Boolean, Table
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Numeric, Boolean, Table, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -35,7 +35,7 @@ class Category(Base):
     parent_id = Column(Integer, ForeignKey('categories.id'), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    children = relationship('Category', backref='parent', remote_side=[id])
+    parent = relationship('Category', remote_side=[id], backref='children')
     products = relationship('Product', back_populates='category')
 
 class Product(Base):
@@ -48,6 +48,8 @@ class Product(Base):
     stock = Column(Integer, default=0)
     category_id = Column(Integer, ForeignKey('categories.id'), nullable=True)
     status = Column(String(20), default='active')  # active, draft, archived
+    sizes = Column(JSON, nullable=True) # List of available sizes
+
 
     min_order_qty = Column(Integer, default=1)
     is_group_order_enabled = Column(Boolean, default=False)
@@ -66,6 +68,8 @@ class ProductVariant(Base):
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey('products.id'), nullable=False)
     name = Column(String(100), nullable=False)
+    price = Column(Numeric(10, 2), nullable=True) # Price can vary by variant
+    stock = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     product = relationship('Product', back_populates='variants')

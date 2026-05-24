@@ -28,6 +28,8 @@ class ProductImageBase(BaseModel):
 
 class ProductVariantBase(BaseModel):
     name: str
+    price: Optional[Decimal] = None
+    stock: int = 0
 
 class ProductVariantCreate(ProductVariantBase):
     product_id: int
@@ -57,13 +59,15 @@ class ProductBase(BaseModel):
     name: str
     sku: str
     description: Optional[str] = None
-    price: Decimal
-    stock: int = 0
+    price: Optional[Decimal] = None
+    stock: Optional[int] = 0
     category_id: Optional[int] = None
     status: str = 'active'
     min_order_qty: int = 1
     is_group_order_enabled: bool = False
     group_size: Optional[int] = None
+    sizes: Optional[List[str]] = []
+
 
 class ProductCreate(ProductBase):
     variants: Optional[List[ProductVariantBase]] = []
