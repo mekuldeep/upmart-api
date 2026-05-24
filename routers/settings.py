@@ -10,7 +10,7 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 UPLOAD_DIR = "uploads/settings"
 if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @router.post("/logo")
 async def upload_logo(
