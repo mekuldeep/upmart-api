@@ -9,7 +9,10 @@ import os
 import mimetypes
 
 # Create database tables
-models.Base.metadata.create_all(bind=engine)
+try:
+    models.Base.metadata.create_all(bind=engine)
+except Exception as e:
+    print("Tables already exist, skipping...")
 
 app = FastAPI(title="Upmart B2B FastAPI")
 
