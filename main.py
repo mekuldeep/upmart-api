@@ -83,6 +83,7 @@ async def serve_upload(subpath: str):
     # so images load correctly for ANY device — no request header needed.
     response.headers["ngrok-skip-browser-warning"] = "true"
     response.headers["Bypass-Tunnel-Reminder"] = "true"
+    response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Cache-Control"] = "public, max-age=3600"
     return response
 
