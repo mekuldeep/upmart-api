@@ -34,10 +34,16 @@ app.add_middleware(
         "http://127.0.0.1:5174",
         "https://upmart-admin.vercel.app",
         "https://upmart-frontend.vercel.app",
+        "https://upmart.co.in",
         "https://www.upmart.co.in",
-        "https://www.admin.upmart.co.in"
+        "https://admin.upmart.co.in",
+        "https://www.admin.upmart.co.in",
+        "http://upmart.co.in",
+        "http://www.upmart.co.in",
+        "http://admin.upmart.co.in",
+        "http://www.admin.upmart.co.in"
     ],
-    allow_origin_regex=r"https://.*\.ngrok-free\.app|https://.*\.vercel\.app|http://localhost:.*|http://127\.0\.0\.1:.*",
+    allow_origin_regex=r"https://.*\.ngrok-free\.app|https://.*\.vercel\.app|http://localhost:.*|http://127\.0\.0\.1:.*|https?://(.*\.)?upmart\.co\.in",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
