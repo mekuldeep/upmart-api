@@ -51,6 +51,7 @@ def save_settings(data):
         json.dump(data, f, indent=4)
 
 @router.post("/logo")
+@router.post("/logo/")
 async def upload_logo(
     file: UploadFile = File(...),
     current_admin: models.User = Depends(get_current_admin)
@@ -77,6 +78,7 @@ async def upload_logo(
     return {"logo_url": logo_path}
 
 @router.get("")
+@router.get("/")
 def get_settings():
     settings = load_settings()
     # Check if logo file exists, otherwise set to None
@@ -87,6 +89,7 @@ def get_settings():
     return settings
 
 @router.put("")
+@router.put("/")
 def update_settings(
     data: dict,
     current_admin: models.User = Depends(get_current_admin)
