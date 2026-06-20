@@ -2,6 +2,7 @@
 Coupons Admin Router
 """
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from database import get_db
 import models
@@ -26,6 +27,44 @@ class CouponCreate(BaseModel):
     valid_to: Optional[datetime] = None
 
 
+class CouponUpdate(BaseModel):
+    code: Optional[str] = None
+    description: Optional[str] = None
+    discount_type: Optional[str] = None
+    discount_value: Optional[float] = None
+    min_order_amount: Optional[float] = None
+    max_discount_amount: Optional[float] = None
+    max_uses: Optional[int] = None
+    is_active: Optional[bool] = None
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+
+
+def validate_coupon_fields(data: dict):
+    discount_type = data.get("discount_type")
+    discount_value = data.get("discount_value")
+    min_order_amount = data.get("min_order_amount")
+    max_discount_amount = data.get("max_discount_amount")
+    max_uses = data.get("max_uses")
+    valid_from = data.get("valid_from")
+    valid_to = data.get("valid_to")
+
+    if discount_type is not None and discount_type not in ["percentage", "fixed"]:
+        raise HTTPException(status_code=400, detail="discount_type must be 'percentage' or 'fixed'")
+    if discount_value is not None and discount_value <= 0:
+        raise HTTPException(status_code=400, detail="Discount must be greater than 0")
+    if discount_type == "percentage" and discount_value is not None and discount_value > 100:
+        raise HTTPException(status_code=400, detail="Percentage discount cannot be more than 100")
+    if min_order_amount is not None and min_order_amount < 0:
+        raise HTTPException(status_code=400, detail="Minimum order amount cannot be negative")
+    if max_discount_amount is not None and max_discount_amount <= 0:
+        raise HTTPException(status_code=400, detail="Maximum discount amount must be greater than 0")
+    if max_uses is not None and max_uses < 1:
+        raise HTTPException(status_code=400, detail="Usage limit must be at least 1")
+    if valid_from and valid_to and valid_to < valid_from:
+        raise HTTPException(status_code=400, detail="Coupon expiry must be after start date")
+
+
 @router.get("")
 def list_coupons(db: Session = Depends(get_db), current_admin: models.User = Depends(get_current_admin)):
     coupons = db.query(models.Coupon).order_by(models.Coupon.created_at.desc()).all()
@@ -48,15 +87,18 @@ def list_coupons(db: Session = Depends(get_db), current_admin: models.User = Dep
 
 @router.post("", status_code=201)
 def create_coupon(data: CouponCreate, db: Session = Depends(get_db), current_admin: models.User = Depends(get_current_admin)):
-    existing = db.query(models.Coupon).filter(models.Coupon.code == data.code.upper().strip()).first()
+    code = data.code.upper().strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Coupon code is required")
+
+    validate_coupon_fields(data.dict())
+
+    existing = db.query(models.Coupon).filter(models.Coupon.code == code).first()
     if existing:
         raise HTTPException(status_code=400, detail="Coupon code already exists")
-    
-    if data.discount_type not in ['percentage', 'fixed']:
-        raise HTTPException(status_code=400, detail="discount_type must be 'percentage' or 'fixed'")
-    
+
     coupon = models.Coupon(
-        code=data.code.upper().strip(),
+        code=code,
         description=data.description,
         discount_type=data.discount_type,
         discount_value=data.discount_value,
@@ -67,26 +109,46 @@ def create_coupon(data: CouponCreate, db: Session = Depends(get_db), current_adm
         valid_from=data.valid_from,
         valid_to=data.valid_to,
     )
-    db.add(coupon)
-    db.commit()
-    db.refresh(coupon)
+    try:
+        db.add(coupon)
+        db.commit()
+        db.refresh(coupon)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Coupon could not be created")
     return {"msg": "Coupon created", "coupon": {"id": coupon.id, "code": coupon.code}}
 
 
 @router.put("/{coupon_id}")
-def update_coupon(coupon_id: int, data: dict, db: Session = Depends(get_db), current_admin: models.User = Depends(get_current_admin)):
+def update_coupon(coupon_id: int, data: CouponUpdate, db: Session = Depends(get_db), current_admin: models.User = Depends(get_current_admin)):
     coupon = db.query(models.Coupon).filter(models.Coupon.id == coupon_id).first()
     if not coupon:
         raise HTTPException(status_code=404, detail="Coupon not found")
-    
-    for key, value in data.items():
+
+    payload = data.dict(exclude_unset=True)
+    if "code" in payload and payload["code"] is not None:
+        payload["code"] = payload["code"].upper().strip()
+        if not payload["code"]:
+            raise HTTPException(status_code=400, detail="Coupon code is required")
+        existing = db.query(models.Coupon).filter(
+            models.Coupon.code == payload["code"],
+            models.Coupon.id != coupon_id
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Coupon code already exists")
+
+    validate_coupon_fields(payload)
+
+    for key, value in payload.items():
         if hasattr(coupon, key) and key not in ['id', 'used_count', 'created_at']:
-            if key == 'code' and value:
-                value = value.upper().strip()
             setattr(coupon, key, value)
-    
-    db.commit()
-    db.refresh(coupon)
+
+    try:
+        db.commit()
+        db.refresh(coupon)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Coupon could not be updated")
     return {"msg": "Coupon updated"}
 
 
@@ -95,6 +157,10 @@ def delete_coupon(coupon_id: int, db: Session = Depends(get_db), current_admin: 
     coupon = db.query(models.Coupon).filter(models.Coupon.id == coupon_id).first()
     if not coupon:
         raise HTTPException(status_code=404, detail="Coupon not found")
-    db.delete(coupon)
-    db.commit()
+    try:
+        db.delete(coupon)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Coupon could not be deleted")
     return {"msg": "Coupon deleted"}

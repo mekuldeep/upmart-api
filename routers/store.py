@@ -106,6 +106,41 @@ class PlaceOrderRequest(BaseModel):
     shipping_address: Optional[str] = None
 
 
+def validate_coupon_for_total(db: Session, code: str, cart_total: float):
+    coupon = db.query(models.Coupon).filter(
+        models.Coupon.code == code.upper().strip(),
+        models.Coupon.is_active == True
+    ).first()
+
+    if not coupon:
+        raise HTTPException(status_code=404, detail="Invalid coupon code")
+
+    now = datetime.datetime.utcnow()
+    if coupon.valid_from and coupon.valid_from > now:
+        raise HTTPException(status_code=400, detail="This coupon is not yet active")
+    if coupon.valid_to and coupon.valid_to < now:
+        raise HTTPException(status_code=400, detail="This coupon has expired")
+
+    if coupon.min_order_amount and cart_total < float(coupon.min_order_amount):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Minimum order amount of INR {coupon.min_order_amount} required for this coupon"
+        )
+
+    if coupon.max_uses and coupon.used_count >= coupon.max_uses:
+        raise HTTPException(status_code=400, detail="This coupon has reached its usage limit")
+
+    discount_amount = 0.0
+    if coupon.discount_type == 'percentage':
+        discount_amount = cart_total * (float(coupon.discount_value) / 100)
+        if coupon.max_discount_amount:
+            discount_amount = min(discount_amount, float(coupon.max_discount_amount))
+    elif coupon.discount_type == 'fixed':
+        discount_amount = min(float(coupon.discount_value), cart_total)
+
+    return coupon, round(discount_amount, 2)
+
+
 # ─── Auth Endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/register", status_code=201)
@@ -477,38 +512,10 @@ def validate_coupon(
     current_user: Optional[models.User] = Depends(get_optional_customer)
 ):
     """Validate and apply a coupon code to the cart."""
-    # Look up coupon
-    coupon = db.query(models.Coupon).filter(
-        models.Coupon.code == data.code.upper().strip(),
-        models.Coupon.is_active == True
-    ).first()
-    
-    if not coupon:
-        raise HTTPException(status_code=404, detail="Invalid coupon code")
-    
-    now = datetime.datetime.utcnow()
-    if coupon.valid_from and coupon.valid_from > now:
-        raise HTTPException(status_code=400, detail="This coupon is not yet active")
-    if coupon.valid_to and coupon.valid_to < now:
-        raise HTTPException(status_code=400, detail="This coupon has expired")
-    
-    if coupon.min_order_amount and data.cart_total < float(coupon.min_order_amount):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Minimum order amount of ₹{coupon.min_order_amount} required for this coupon"
-        )
-    
-    if coupon.max_uses and coupon.used_count >= coupon.max_uses:
-        raise HTTPException(status_code=400, detail="This coupon has reached its usage limit")
-    
-    # Calculate discount
-    discount_amount = 0.0
-    if coupon.discount_type == 'percentage':
-        discount_amount = data.cart_total * (float(coupon.discount_value) / 100)
-        if coupon.max_discount_amount:
-            discount_amount = min(discount_amount, float(coupon.max_discount_amount))
-    elif coupon.discount_type == 'fixed':
-        discount_amount = min(float(coupon.discount_value), data.cart_total)
+    if data.cart_total <= 0:
+        raise HTTPException(status_code=400, detail="Cart total must be greater than 0")
+
+    coupon, discount_amount = validate_coupon_for_total(db, data.code, data.cart_total)
     
     return {
         "valid": True,
@@ -519,7 +526,7 @@ def validate_coupon(
             "discount_value": float(coupon.discount_value),
             "description": coupon.description,
         },
-        "discount_amount": round(discount_amount, 2),
+        "discount_amount": discount_amount,
         "final_total": round(data.cart_total - discount_amount, 2)
     }
 
@@ -598,17 +605,7 @@ def place_order(
     discount_amount = 0.0
     coupon_obj = None
     if data.coupon_code:
-        coupon_obj = db.query(models.Coupon).filter(
-            models.Coupon.code == data.coupon_code.upper().strip(),
-            models.Coupon.is_active == True
-        ).first()
-        if coupon_obj:
-            if coupon_obj.discount_type == 'percentage':
-                discount_amount = subtotal * (float(coupon_obj.discount_value) / 100)
-                if coupon_obj.max_discount_amount:
-                    discount_amount = min(discount_amount, float(coupon_obj.max_discount_amount))
-            elif coupon_obj.discount_type == 'fixed':
-                discount_amount = min(float(coupon_obj.discount_value), subtotal)
+        coupon_obj, discount_amount = validate_coupon_for_total(db, data.coupon_code, subtotal)
     
     total = round(subtotal - discount_amount, 2)
     
