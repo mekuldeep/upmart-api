@@ -1,12 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from database import get_db
 import models, schemas
 from routers.auth import get_current_admin
 from typing import List, Optional, Any
+from decimal import Decimal
 import os
 import uuid
 import shutil
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -29,6 +34,17 @@ def allowed_image_file(filename):
     if not filename: return False
     ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp', 'gif', 'jfif', 'pjpeg', 'pjp', 'svg'}
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def sync_product_totals_from_variants(product: models.Product):
+    variants = list(product.variants or [])
+    if not variants:
+        product.stock = 0
+        return
+
+    product.stock = sum(v.stock or 0 for v in variants)
+    first_priced_variant = next((v for v in variants if v.price is not None), None)
+    if first_priced_variant:
+        product.price = first_priced_variant.price
 
 @router.get("")
 def list_products(
@@ -53,6 +69,8 @@ def list_products(
     
     if status:
         query = query.filter(models.Product.status == status)
+    else:
+        query = query.filter(models.Product.status != 'archived')
 
     paginated = paginate_query(query.order_by(models.Product.created_at.desc()), page)
     
@@ -127,34 +145,47 @@ def create_product(
     db: Session = Depends(get_db),
     current_admin: models.User = Depends(get_current_admin)
 ):
+    if data.price is None:
+        raise HTTPException(status_code=400, detail="Price is required")
+
+    if data.price <= Decimal("0"):
+        raise HTTPException(status_code=400, detail="Price must be greater than 0")
+
     if db.query(models.Product).filter(models.Product.sku == data.sku).first():
         raise HTTPException(status_code=400, detail="Product with this SKU already exists")
 
-    product_data = data.dict()
+    product_data = data.model_dump()
     variants_data = product_data.pop('variants', [])
     
     product = models.Product(**product_data)
     db.add(product)
-    db.commit()
-    db.refresh(product)
-    
-    # Create variants if provided
     created_variants = []
-    for v_data in variants_data:
-        variant = models.ProductVariant(
-            product_id=product.id, 
-            name=v_data['name'], 
-            price=v_data.get('price'),
-            stock=v_data.get('stock', 0)
-        )
-        db.add(variant)
-        created_variants.append(variant)
-    
-    if variants_data:
+    try:
+        db.flush()
+
+        # Create variants if provided
+        for v_data in variants_data:
+            variant = models.ProductVariant(
+                product_id=product.id, 
+                name=v_data['name'], 
+                price=v_data.get('price'),
+                stock=v_data.get('stock', 0)
+            )
+            db.add(variant)
+            created_variants.append(variant)
+
+        if created_variants:
+            product.stock = sum(v.stock or 0 for v in created_variants)
+            if created_variants[0].price is not None:
+                product.price = created_variants[0].price
+
         db.commit()
         for v in created_variants:
             db.refresh(v)
         db.refresh(product)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Could not create product")
 
     return {
         "msg": "Product created", 
@@ -231,7 +262,7 @@ def get_product(
 @router.put("/{product_id}")
 def update_product(
     product_id: int,
-    data: dict,
+    data: schemas.ProductUpdate,
     db: Session = Depends(get_db),
     current_admin: models.User = Depends(get_current_admin)
 ):
@@ -239,20 +270,32 @@ def update_product(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    if 'sku' in data and data['sku'] != product.sku:
-        if db.query(models.Product).filter(models.Product.sku == data['sku']).first():
+    update_data = data.model_dump(exclude_unset=True)
+
+    if "price" in update_data:
+        if update_data["price"] is None:
+            raise HTTPException(status_code=400, detail="Price is required")
+        if update_data["price"] <= Decimal("0"):
+            raise HTTPException(status_code=400, detail="Price must be greater than 0")
+
+    if 'sku' in update_data and update_data['sku'] != product.sku:
+        if db.query(models.Product).filter(models.Product.sku == update_data['sku']).first():
             raise HTTPException(status_code=400, detail="Product with this SKU already exists")
 
-    for key, value in data.items():
+    for key, value in update_data.items():
         if hasattr(product, key):
             setattr(product, key, value)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Could not update product")
     db.refresh(product)
     return {"msg": "Product updated", "product": product}
 
-@router.delete("/{product_id}")
-def delete_product(
+@router.patch("/{product_id}/archive")
+def archive_product(
     product_id: int,
     db: Session = Depends(get_db),
     current_admin: models.User = Depends(get_current_admin)
@@ -260,10 +303,85 @@ def delete_product(
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    
-    db.delete(product)
-    db.commit()
-    return {"msg": "Product deleted"}
+
+    product.status = 'archived'
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Database error while archiving product %s", product_id)
+        raise HTTPException(status_code=500, detail="Could not archive product")
+
+    return {"msg": "Product archived", "archived": True}
+
+@router.delete("/{product_id}")
+def delete_product(
+    product_id: int,
+    force: bool = False,
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(get_current_admin)
+):
+    product = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    order_ids = [
+        order_id for (order_id,) in db.query(models.OrderItem.order_id)
+        .filter(models.OrderItem.product_id == product_id)
+        .distinct()
+        .all()
+    ]
+
+    if order_ids and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    f"This product has {len(order_ids)} related order(s). "
+                    "Deleting this product will delete the related order(s) as well."
+                ),
+                "order_count": len(order_ids),
+                "requires_confirmation": True,
+            },
+        )
+
+    image_paths = [
+        os.path.join(UPLOAD_DIR, img.filename)
+        for img in product.images
+        if img.filename
+    ]
+
+    try:
+        if order_ids:
+            related_orders = db.query(models.Order).filter(models.Order.id.in_(order_ids)).all()
+            for order in related_orders:
+                db.delete(order)
+            db.flush()
+
+        db.delete(product)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete product because it is still used by existing records",
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Database error while deleting product %s", product_id)
+        raise HTTPException(status_code=500, detail="Could not delete product")
+
+    for file_path in image_paths:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except OSError:
+            logger.warning("Could not delete product image file %s", file_path, exc_info=True)
+
+    return {
+        "msg": "Product and related orders deleted" if order_ids else "Product deleted",
+        "deleted_orders": len(order_ids),
+    }
 
 @router.post("/{product_id}/images")
 def upload_images(
@@ -358,7 +476,10 @@ def create_variant(
         stock=data.stock
     )
     db.add(variant)
+    db.flush()
+    sync_product_totals_from_variants(product)
     db.commit()
+    db.refresh(product)
     db.refresh(variant)
     return {"msg": "Variant created", "variant": {"id": variant.id, "name": variant.name, "price": float(variant.price) if variant.price else None, "stock": variant.stock}}
 
@@ -377,7 +498,9 @@ def update_variant(
     variant.name = data.name
     variant.price = data.price
     variant.stock = data.stock
+    sync_product_totals_from_variants(variant.product)
     db.commit()
+    db.refresh(variant)
     return {"msg": "Variant updated", "variant": {"id": variant.id, "name": variant.name, "price": float(variant.price) if variant.price else None, "stock": variant.stock}}
 
 @router.delete("/{product_id}/variants/{variant_id}")
@@ -398,6 +521,8 @@ def delete_variant(
             os.remove(file_path)
 
     db.delete(variant)
+    db.flush()
+    sync_product_totals_from_variants(db.query(models.Product).filter(models.Product.id == product_id).first())
     db.commit()
     return {"msg": "Variant deleted"}
 

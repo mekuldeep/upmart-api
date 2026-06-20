@@ -1,12 +1,16 @@
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 from database import engine, Base
 import models
 from routers import auth, categories, products, orders, customers, settings, store, coupons
 import os
 import mimetypes
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Create database tables
 # try:
@@ -16,38 +20,62 @@ import mimetypes
 
 app = FastAPI(title="Upmart B2B FastAPI")
 
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8081",
-        "http://localhost:8080",
-        "http://localhost:8000",
-        "http://localhost:5000",
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:8081",
-        "http://127.0.0.1:8080",
-        "http://127.0.0.1:8000",
-        "http://127.0.0.1:5000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-        "https://upmart-admin.vercel.app",
-        "https://upmart-frontend.vercel.app",
-        "https://upmart.co.in",
-        "https://www.upmart.co.in",
-        "https://admin.upmart.co.in",
-        "https://www.admin.upmart.co.in",
-        "http://upmart.co.in",
-        "http://www.upmart.co.in",
-        "http://admin.upmart.co.in",
-        "http://www.admin.upmart.co.in"
-    ],
-    allow_origin_regex=r"https://.*\.ngrok-free\.app|https://.*\.vercel\.app|http://localhost:.*|http://127\.0\.0\.1:.*|https?://(.*\.)?upmart\.co\.in",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+CORS_ALLOW_ORIGINS = [
+    "http://localhost:8081",
+    "http://localhost:8080",
+    "http://localhost:8000",
+    "http://localhost:5000",
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:8081",
+    "http://127.0.0.1:8080",
+    "http://127.0.0.1:8000",
+    "http://127.0.0.1:5000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "https://upmart-admin.vercel.app",
+    "https://upmart-frontend.vercel.app",
+    "https://upmart.co.in",
+    "https://www.upmart.co.in",
+    "https://admin.upmart.co.in",
+    "https://www.admin.upmart.co.in",
+    "http://upmart.co.in",
+    "http://www.upmart.co.in",
+    "http://admin.upmart.co.in",
+    "http://www.admin.upmart.co.in",
+]
+
+CORS_ALLOW_ORIGIN_REGEX = (
+    r"https://.*\.ngrok-free\.app|"
+    r"https://.*\.vercel\.app|"
+    r"http://localhost:.*|"
+    r"http://127\.0\.0\.1:.*|"
+    r"https?://(.*\.)?upmart\.co\.in"
 )
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=getattr(exc, "headers", None),
+    )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled API error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+@app.exception_handler(SQLAlchemyError)
+async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
+    logger.exception("Database error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Database error"},
+    )
 
 # Static files for uploads
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -99,6 +127,17 @@ app.include_router(coupons.router, prefix="/api")
 @app.get("/")
 def read_root():
     return {"message": "Upmart B2B FastAPI is running!"}
+
+# Keep CORS as the outermost ASGI wrapper so error responses also include
+# Access-Control-Allow-Origin instead of looking like browser CORS failures.
+app = CORSMiddleware(
+    app,
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_origin_regex=CORS_ALLOW_ORIGIN_REGEX,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 if __name__ == "__main__":
     import uvicorn

@@ -61,7 +61,7 @@ class Product(Base):
     category = relationship('Category', back_populates='products')
     variants = relationship('ProductVariant', back_populates='product', cascade='all, delete-orphan')
     images = relationship('ProductImage', back_populates='product', cascade='all, delete-orphan')
-    order_items = relationship('OrderItem', back_populates='product')
+    order_items = relationship('OrderItem', back_populates='product', passive_deletes=True)
 
 class ProductVariant(Base):
     __tablename__ = 'product_variants'

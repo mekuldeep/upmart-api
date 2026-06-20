@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional
 from datetime import datetime
 from decimal import Decimal
@@ -28,7 +28,7 @@ class ProductImageBase(BaseModel):
 
 class ProductVariantBase(BaseModel):
     name: str
-    price: Optional[Decimal] = None
+    price: Optional[Decimal] = Field(default=None, gt=0)
     stock: int = 0
 
 class ProductVariantCreate(ProductVariantBase):
@@ -59,7 +59,7 @@ class ProductBase(BaseModel):
     name: str
     sku: str
     description: Optional[str] = None
-    price: Optional[Decimal] = None
+    price: Optional[Decimal] = Field(default=None, gt=0)
     stock: Optional[int] = 0
     category_id: Optional[int] = None
     status: str = 'active'
@@ -71,6 +71,19 @@ class ProductBase(BaseModel):
 
 class ProductCreate(ProductBase):
     variants: Optional[List[ProductVariantBase]] = []
+
+class ProductUpdate(BaseModel):
+    name: Optional[str] = None
+    sku: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[Decimal] = Field(default=None, gt=0)
+    stock: Optional[int] = None
+    category_id: Optional[int] = None
+    status: Optional[str] = None
+    min_order_qty: Optional[int] = None
+    is_group_order_enabled: Optional[bool] = None
+    group_size: Optional[int] = None
+    sizes: Optional[List[str]] = None
 
 class Product(ProductBase):
     id: int
