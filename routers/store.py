@@ -4,7 +4,7 @@ All routes here are accessible to frontend users (public or with customer JWT)
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from database import get_db
 import models, schemas
 from utils.auth import verify_password, get_password_hash, create_access_token
@@ -139,6 +139,26 @@ def validate_coupon_for_total(db: Session, code: str, cart_total: float):
         discount_amount = min(float(coupon.discount_value), cart_total)
 
     return coupon, round(discount_amount, 2)
+
+def active_category_filter():
+    return or_(models.Category.is_active == True, models.Category.is_active.is_(None))
+
+def sorted_children(category: models.Category):
+    return sorted(
+        [child for child in category.children if child.is_active is not False],
+        key=lambda child: (child.sort_order or 0, child.name.lower())
+    )
+
+def category_ids_with_active_children(category: models.Category):
+    return [category.id] + [child.id for child in sorted_children(category)]
+
+def active_product_count(db: Session, category_ids: List[int]) -> int:
+    if not category_ids:
+        return 0
+    return db.query(models.Product).filter(
+        models.Product.category_id.in_(category_ids),
+        models.Product.status == 'active'
+    ).count()
 
 
 # ─── Auth Endpoints ────────────────────────────────────────────────────────────
@@ -277,20 +297,29 @@ def change_password(
 @router.get("/categories")
 def list_categories_public(db: Session = Depends(get_db)):
     """List all categories (public, no auth required)."""
-    categories = db.query(models.Category).order_by(models.Category.name).all()
+    categories = db.query(models.Category).filter(active_category_filter()).order_by(models.Category.sort_order, models.Category.name).all()
     result = []
     for c in categories:
-        product_count = db.query(models.Product).filter(
-            models.Product.category_id == c.id,
-            models.Product.status == 'active'
-        ).count()
+        ids = category_ids_with_active_children(c) if c.parent_id is None else [c.id]
         result.append({
             "id": c.id,
             "name": c.name,
             "slug": c.slug,
             "description": c.description,
             "parent_id": c.parent_id,
-            "product_count": product_count,
+            "sort_order": c.sort_order or 0,
+            "is_active": True if c.is_active is None else c.is_active,
+            "product_count": active_product_count(db, ids),
+            "children": [{
+                "id": child.id,
+                "name": child.name,
+                "slug": child.slug,
+                "description": child.description,
+                "parent_id": child.parent_id,
+                "sort_order": child.sort_order or 0,
+                "is_active": True if child.is_active is None else child.is_active,
+                "product_count": active_product_count(db, [child.id]),
+            } for child in sorted_children(c)] if c.parent_id is None else [],
         })
     return {"categories": result}
 
@@ -302,23 +331,41 @@ def list_products_public(
     search: str = "",
     category_id: Optional[int] = None,
     category_slug: Optional[str] = None,
+    category_ids: Optional[str] = None,
     sort: str = "newest",  # newest, price_asc, price_desc, name
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
     db: Session = Depends(get_db)
 ):
     """List active products (public, no auth required)."""
-    query = db.query(models.Product).filter(models.Product.status == 'active')
+    query = db.query(models.Product).join(models.Product.category, isouter=True).filter(
+        models.Product.status == 'active',
+        or_(models.Product.category_id == None, active_category_filter())
+    )
     
     # Category filter by id or slug
-    if category_id:
+    selected_category_ids = []
+    if category_ids:
+        try:
+            selected_category_ids = [int(value) for value in category_ids.split(",") if value.strip()]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid category filter")
+
+    if selected_category_ids:
+        query = query.filter(models.Product.category_id.in_(selected_category_ids))
+    elif category_id:
         query = query.filter(models.Product.category_id == category_id)
     elif category_slug:
-        cat = db.query(models.Category).filter(models.Category.slug == category_slug).first()
+        cat = db.query(models.Category).filter(
+            models.Category.slug == category_slug,
+            active_category_filter()
+        ).first()
         if cat:
             # Include subcategory products too
-            sub_ids = [s.id for s in cat.children] + [cat.id]
+            sub_ids = category_ids_with_active_children(cat)
             query = query.filter(models.Product.category_id.in_(sub_ids))
+        else:
+            query = query.filter(False)
     
     # Search
     if search:

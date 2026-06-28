@@ -9,6 +9,8 @@ class CategoryBase(BaseModel):
     slug: Optional[str] = None
     description: Optional[str] = None
     parent_id: Optional[int] = None
+    sort_order: int = 0
+    is_active: bool = True
 
 class CategoryCreate(CategoryBase):
     pass
@@ -17,9 +19,12 @@ class Category(CategoryBase):
     id: int
     created_at: datetime
     product_count: Optional[int] = 0
+    children: Optional[List['Category']] = []
 
     class Config:
         from_attributes = True
+
+Category.model_rebuild()
 
 # Product Images
 class ProductImageBase(BaseModel):

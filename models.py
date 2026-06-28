@@ -33,6 +33,8 @@ class Category(Base):
     slug = Column(String(120), unique=True, nullable=False, index=True)
     description = Column(Text, nullable=True)
     parent_id = Column(Integer, ForeignKey('categories.id'), nullable=True)
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     parent = relationship('Category', remote_side=[id], backref='children')
