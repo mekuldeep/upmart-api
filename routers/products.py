@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from database import get_db
 import models, schemas
@@ -46,6 +46,13 @@ def sync_product_totals_from_variants(product: models.Product):
     if first_priced_variant:
         product.price = first_priced_variant.price
 
+def category_display_name(category: Optional[models.Category]) -> Optional[str]:
+    if not category:
+        return None
+    if category.parent:
+        return f"{category.parent.name} / {category.name}"
+    return category.name
+
 @router.get("")
 def list_products(
     page: int = 1,
@@ -55,17 +62,27 @@ def list_products(
     db: Session = Depends(get_db),
     current_admin: models.User = Depends(get_current_admin)
 ):
-    query = db.query(models.Product).join(models.Product.category, isouter=True)
+    ParentCategory = aliased(models.Category)
+    query = (
+        db.query(models.Product)
+        .join(models.Product.category, isouter=True)
+        .join(ParentCategory, models.Category.parent_id == ParentCategory.id, isouter=True)
+    )
 
     if search:
         query = query.filter(
             models.Product.name.ilike(f'%{search}%') | 
             models.Product.sku.ilike(f'%{search}%') |
-            models.Category.name.ilike(f'%{search}%')
+            models.Category.name.ilike(f'%{search}%') |
+            ParentCategory.name.ilike(f'%{search}%')
         )
     
     if category_id:
-        query = query.filter(models.Product.category_id == category_id)
+        category = db.query(models.Category).filter(models.Category.id == category_id).first()
+        category_ids = [category_id]
+        if category and category.parent_id is None:
+            category_ids.extend(child.id for child in category.children)
+        query = query.filter(models.Product.category_id.in_(category_ids))
     
     if status:
         query = query.filter(models.Product.status == status)
@@ -120,6 +137,7 @@ def list_products(
             "stock": p.stock,
             "category_id": p.category_id,
             "category_name": p.category.name if p.category else None,
+            "category_path": category_display_name(p.category),
             "status": p.status,
             "min_order_qty": p.min_order_qty,
             "is_group_order_enabled": p.is_group_order_enabled,
@@ -246,6 +264,7 @@ def get_product(
             "stock": product.stock,
             "category_id": product.category_id,
             "category_name": product.category.name if product.category else None,
+            "category_path": category_display_name(product.category),
             "status": product.status,
             "min_order_qty": product.min_order_qty,
             "is_group_order_enabled": product.is_group_order_enabled,
