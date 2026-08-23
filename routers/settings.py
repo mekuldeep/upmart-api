@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 import models
 from routers.auth import get_current_admin
 import os
-import shutil
 import json
+from pathlib import Path
+from utils.file_security import save_validated_image
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -11,7 +12,7 @@ UPLOAD_DIR = "uploads/settings"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-SETTINGS_FILE = "settings.json"
+SETTINGS_FILE = os.getenv("SETTINGS_FILE", "settings.json")
 
 DEFAULT_SETTINGS = {
     "siteName": "Upmart",
@@ -56,17 +57,11 @@ async def upload_logo(
     file: UploadFile = File(...),
     current_admin: models.User = Depends(get_current_admin)
 ):
-    # Only allow images
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Only image files are allowed")
-    
-    # Save file as logo (overwrite previous)
-    file_extension = file.filename.split(".")[-1]
-    file_name = f"logo.{file_extension}"
-    full_path = os.path.join(UPLOAD_DIR, file_name)
-    
-    with open(full_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    upload_path = Path(UPLOAD_DIR)
+    file_name = save_validated_image(file, upload_path, filename_stem="logo")
+    for old_logo in upload_path.glob("logo.*"):
+        if old_logo.is_file() and old_logo.name != file_name:
+            old_logo.unlink()
     
     logo_path = f"/uploads/settings/{file_name}"
     

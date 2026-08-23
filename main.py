@@ -9,6 +9,8 @@ from routers import auth, categories, products, orders, customers, settings, sto
 import os
 import mimetypes
 import logging
+from pathlib import Path
+from utils.file_security import resolve_upload_path
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,14 @@ logger = logging.getLogger(__name__)
 # except Exception as e:
 #     print("Tables already exist, skipping...")
 
-app = FastAPI(title="Upmart B2B FastAPI")
+IS_PRODUCTION = os.getenv("ENVIRONMENT", "development").lower() == "production"
+
+app = FastAPI(
+    title="Upmart B2B FastAPI",
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
+)
 
 CORS_ALLOW_ORIGINS = [
     "http://localhost:8081",
@@ -47,7 +56,6 @@ CORS_ALLOW_ORIGINS = [
 
 CORS_ALLOW_ORIGIN_REGEX = (
     r"https://.*\.ngrok-free\.app|"
-    r"https://.*\.vercel\.app|"
     r"http://localhost:.*|"
     r"http://127\.0\.0\.1:.*|"
     r"https?://(.*\.)?upmart\.co\.in"
@@ -93,8 +101,8 @@ if not os.path.exists(UPLOAD_PATH):
 # intercepts the response with its warning page.
 @app.get("/uploads/{subpath:path}")
 async def serve_upload(subpath: str):
-    file_path = os.path.join(UPLOAD_PATH, subpath)
-    if not os.path.exists(file_path) or not os.path.isfile(file_path):
+    file_path = resolve_upload_path(Path(UPLOAD_PATH), subpath)
+    if not file_path.is_file():
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -104,7 +112,7 @@ async def serve_upload(subpath: str):
         content_type = "application/octet-stream"
 
     response = FileResponse(
-        path=file_path,
+        path=str(file_path),
         media_type=content_type,
     )
     # KEY FIX: These response headers tell ngrok to skip its browser warning page,
@@ -127,6 +135,10 @@ app.include_router(coupons.router, prefix="/api")
 @app.get("/")
 def read_root():
     return {"message": "Upmart B2B FastAPI is running!"}
+
+@app.get("/health", include_in_schema=False)
+def health_check():
+    return {"status": "healthy"}
 
 # Keep CORS as the outermost ASGI wrapper so error responses also include
 # Access-Control-Allow-Origin instead of looking like browser CORS failures.

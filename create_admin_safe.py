@@ -41,11 +41,9 @@ def create_admin():
         if not password:
             print("Password cannot be empty.")
             return
-        if len(password) < 8:
-            print("Warning: Password is less than 8 characters.")
-            confirm = input("Are you sure you want to use this password? (y/n): ").strip().lower()
-            if confirm != 'y':
-                return
+        if len(password) < 12:
+            print("Password must be at least 12 characters.")
+            return
 
         # Confirm password
         confirm_password = getpass("Confirm admin password: ").strip()

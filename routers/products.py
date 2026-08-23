@@ -7,9 +7,9 @@ from routers.auth import get_current_admin
 from typing import List, Optional, Any
 from decimal import Decimal
 import os
-import uuid
-import shutil
 import logging
+from pathlib import Path
+from utils.file_security import save_validated_image
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +29,6 @@ def paginate_query(query, page, per_page=20):
         'per_page': per_page,
         'pages': (total + per_page - 1) // per_page
     }
-
-def allowed_image_file(filename):
-    if not filename: return False
-    ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp', 'gif', 'jfif', 'pjpeg', 'pjp', 'svg'}
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def sync_product_totals_from_variants(product: models.Product):
     variants = list(product.variants or [])
@@ -442,16 +437,8 @@ def upload_images(
     uploaded_images = []
     for file in images:
         print(f"DEBUG: Processing file: {file.filename}")
-        if file and allowed_image_file(file.filename):
-            ext = file.filename.rsplit('.', 1)[1].lower()
-            filename = f"{uuid.uuid4()}.{ext}"
-            file_path = os.path.join(UPLOAD_DIR, filename)
-            
-            # Ensure we are at the start of the file
-            file.file.seek(0)
-            
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+        if file:
+            filename = save_validated_image(file, Path(UPLOAD_DIR))
             
             # Check if this product has ANY images yet
             total_product_images = db.query(models.ProductImage).filter(models.ProductImage.product_id == product_id).count()
@@ -470,7 +457,7 @@ def upload_images(
             uploaded_images.append(img)
             print(f"DEBUG: Saved image as {filename}")
         else:
-            print(f"DEBUG: File rejected by allowed_image_file: {file.filename}")
+            raise HTTPException(status_code=400, detail="Image is required")
     
     db.commit()
     print(f"DEBUG: Upload complete, saved {len(uploaded_images)} images")

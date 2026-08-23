@@ -209,6 +209,10 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
+class AdminPasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=12, max_length=128)
+
 class AdminInfo(BaseModel):
     id: int
     email: str

@@ -6,7 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-secret-key")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY must be configured")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
 
@@ -19,8 +21,7 @@ def verify_password(plain_password: str, hashed_password: str):
             plain_password.encode('utf-8'), 
             hashed_password.encode('utf-8')
         )
-    except Exception as e:
-        print(f"Bcrypt verification error: {e}")
+    except (TypeError, ValueError):
         return False
 
 def get_password_hash(password: str):

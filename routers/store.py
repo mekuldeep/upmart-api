@@ -10,6 +10,7 @@ import models, schemas
 from utils.auth import verify_password, get_password_hash, create_access_token
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
+from utils.auth import ALGORITHM, SECRET_KEY
 import os
 import datetime
 from typing import Optional, List
@@ -18,10 +19,6 @@ from pydantic import BaseModel, EmailStr
 router = APIRouter(prefix="/store", tags=["store"])
 
 customer_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/store/login", auto_error=False)
-
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-secret-key")
-ALGORITHM = "HS256"
-
 
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
 

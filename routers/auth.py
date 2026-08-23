@@ -3,17 +3,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from database import get_db
 import models, schemas
-from utils.auth import verify_password, get_password_hash, create_access_token
+from utils.auth import ALGORITHM, SECRET_KEY, create_access_token, get_password_hash, verify_password
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-import os
 
 router = APIRouter(prefix="/admin", tags=["auth"])
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/admin/login")
-
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-secret-key")
-ALGORITHM = "HS256"
 
 def get_current_admin(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
@@ -39,22 +35,16 @@ def get_current_admin(token: str = Depends(oauth2_scheme), db: Session = Depends
 @router.post("/login")
 def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
     try:
-        print(f"LOGIN ATTEMPT: Email={data.email}, PwdLen={len(data.password)}")
         user = db.query(models.User).filter(models.User.email == data.email, models.User.is_admin == True).first()
         
         if not user:
-            print(f"LOGIN FAILED: User {data.email} not found or not admin")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid admin email or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
             
-        print(f"DEBUG: Found user {user.email}")
-        print(f"DEBUG: stored hash starts with {user.password_hash[:10]}... Length: {len(user.password_hash)}")
-        
         is_valid = verify_password(data.password, user.password_hash)
-        print(f"DEBUG: Password valid: {is_valid}")
         
         if not is_valid:
             raise HTTPException(
@@ -75,28 +65,19 @@ def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
         }
     except HTTPException:
         raise
-    except Exception as e:
-        import traceback
-        print(f"LOGIN CRITICAL ERROR: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/change-password")
 def change_password(
-    data: dict, 
+    data: schemas.AdminPasswordChange,
     current_admin: models.User = Depends(get_current_admin), 
     db: Session = Depends(get_db)
 ):
-    current_password = data.get('current_password')
-    new_password = data.get('new_password')
-    
-    if not current_password or not new_password:
-        raise HTTPException(status_code=400, detail="Current and new password are required")
-        
-    if not verify_password(current_password, current_admin.password_hash):
+    if not verify_password(data.current_password, current_admin.password_hash):
         raise HTTPException(status_code=403, detail="Incorrect current password")
     
-    current_admin.password_hash = get_password_hash(new_password)
+    current_admin.password_hash = get_password_hash(data.new_password)
     db.commit()
     
     return {"msg": "Password updated successfully"}
