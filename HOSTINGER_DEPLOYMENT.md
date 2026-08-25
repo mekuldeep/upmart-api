@@ -14,6 +14,11 @@ Only SSH (22), HTTP (80), and HTTPS (443) are public. FastAPI binds to
 `uploads_data` Docker volumes persist the database, product images, logos, and
 site settings across container replacements.
 
+The application is installed under `/srv/apps/upmart-api` and owned by the
+non-root `deploy` account. Future applications should use their own directory,
+Compose project name, loopback port, and Nginx site—for example
+`/srv/apps/another-api` on `127.0.0.1:8001`.
+
 ## 1. Create and secure the VPS
 
 Install Ubuntu 24.04 LTS in hPanel, then connect as root:
@@ -73,15 +78,18 @@ usermod -aG docker deploy
 
 Log out and reconnect as `deploy`.
 
-## 2. Clone the backend
+## 2. Create the reusable application layout
 
 ```bash
-sudo mkdir -p /opt/upmart
-sudo chown deploy:deploy /opt/upmart
-cd /opt/upmart
-git clone YOUR_FASTAPI_GITHUB_REPOSITORY_URL backend
-cd backend
+sudo mkdir -p /srv/apps /srv/backups
+sudo chown deploy:deploy /srv/apps /srv/backups
+cd /srv/apps
+git clone YOUR_FASTAPI_GITHUB_REPOSITORY_URL upmart-api
+cd upmart-api
 ```
+
+From this point onward, run Git and Docker commands as `deploy`, not root. Use
+`sudo` only for shared operating-system configuration such as Nginx and UFW.
 
 The repository must contain `Dockerfile`, `compose.yml`, `main.py`, and
 `requirements.txt` at this level.
@@ -105,6 +113,17 @@ chmod 600 .env
 ```
 
 Replace both placeholder secrets. Never commit `.env`.
+
+Keep these values unique per application:
+
+```env
+COMPOSE_PROJECT_NAME=upmart_api
+API_BIND_PORT=8000
+```
+
+A future application could use `COMPOSE_PROJECT_NAME=another_api` and
+`API_BIND_PORT=8001`. This prevents container, network, volume, and port
+collisions.
 
 ## 4. Build and start
 
@@ -192,7 +211,7 @@ Keep AWS running until these checks pass.
 ## 9. Routine deployment
 
 ```bash
-cd /opt/upmart/backend
+cd /srv/apps/upmart-api
 git pull --ff-only
 docker compose up -d --build
 docker compose ps
@@ -207,20 +226,20 @@ Never run `docker compose down -v`; `-v` deletes the persistent volumes.
 Create a backup directory:
 
 ```bash
-mkdir -p /opt/upmart/backups
+mkdir -p /srv/backups/upmart-api
 ```
 
 Back up PostgreSQL:
 
 ```bash
-cd /opt/upmart/backend
-docker compose exec -T db pg_dump -U upmart_user -d upmart | gzip > /opt/upmart/backups/upmart-$(date +%F-%H%M).sql.gz
+cd /srv/apps/upmart-api
+docker compose exec -T db pg_dump -U upmart_user -d upmart | gzip > /srv/backups/upmart-api/upmart-$(date +%F-%H%M).sql.gz
 ```
 
 Back up uploads and settings:
 
 ```bash
-docker compose exec -T api tar -czf - -C /app/uploads . > /opt/upmart/backups/uploads-$(date +%F-%H%M).tar.gz
+docker compose exec -T api tar -czf - -C /app/uploads . > /srv/backups/upmart-api/uploads-$(date +%F-%H%M).tar.gz
 ```
 
 Copy backups to another machine or storage provider. Backups kept only on the

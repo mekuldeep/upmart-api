@@ -1,7 +1,6 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: upmart-db
     restart: unless-stopped
     env_file:
       - .env
@@ -18,7 +17,6 @@ services:
   api:
     build:
       context: .
-    container_name: upmart-api
     restart: unless-stopped
     env_file:
       - .env
@@ -29,7 +27,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${API_BIND_PORT:-8000}:8000"
     volumes:
       - uploads_data:/app/uploads
     healthcheck:
