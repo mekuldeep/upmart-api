@@ -114,6 +114,11 @@ chmod 600 .env
 
 Replace both placeholder secrets. Never commit `.env`.
 
+When importing the repository through Hostinger Docker Manager, enter these
+same variables in the project's environment-variable editor. Docker Manager
+does not import the ignored local `.env` file from Git. Compose will now stop
+with a clear message if either required secret is absent.
+
 Keep these values unique per application:
 
 ```env
