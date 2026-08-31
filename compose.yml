@@ -8,6 +8,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Localhost-only publishing enables secure SSH-tunnel access from tools
+    # such as TablePlus without exposing PostgreSQL to the internet.
+    ports:
+      - "127.0.0.1:${DB_BIND_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s

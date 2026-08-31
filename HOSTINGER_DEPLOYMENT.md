@@ -124,11 +124,14 @@ Keep these values unique per application:
 ```env
 COMPOSE_PROJECT_NAME=upmart_api
 API_BIND_PORT=8000
+DB_BIND_PORT=5432
 ```
 
 A future application could use `COMPOSE_PROJECT_NAME=another_api` and
-`API_BIND_PORT=8001`. This prevents container, network, volume, and port
-collisions.
+`API_BIND_PORT=8001`. Give its database another localhost port, such as
+`DB_BIND_PORT=5433`. This prevents container, network, volume, and port
+collisions. Database ports remain bound to `127.0.0.1` and must never be opened
+in UFW or the Hostinger firewall; connect through an SSH tunnel instead.
 
 ## 4. Build and start
 
