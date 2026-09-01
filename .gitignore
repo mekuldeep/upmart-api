@@ -113,6 +113,9 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
+!.env.*.example
 .venv
 env/
 venv/
@@ -151,5 +154,39 @@ Thumbs.db
 # Project-specific ignores
 dev.db
 dev.db-journal
+*.sqlite
+*.sqlite3
+settings.json
 uploads/
 scratch/
+backups/
+backup/
+*.sql
+*.sql.gz
+*.dump
+*.bak
+
+# Credentials and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+credentials.json
+secrets.json
+
+# Private operational notes (keep README and sanitized guides tracked)
+private/
+notes/
+instruction*.md
+production-dtl.md
+deployment-secrets.md
+*.private.md
+*.secret.md
+
+# Local Compose overrides
+compose.override.yml
+compose.override.yaml
+docker-compose.override.yml
+docker-compose.override.yaml

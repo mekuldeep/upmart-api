@@ -218,16 +218,119 @@ Keep AWS running until these checks pass.
 
 ## 9. Routine deployment
 
+### 9.1 Prepare and push the release from Windows
+
+Never edit application source code directly on the VPS. Make, test, commit, and
+push each release from the development machine:
+
+```powershell
+cd C:\upmart\fast-api
+venv\Scripts\python.exe -m unittest tests.test_security_helpers -v
+venv\Scripts\python.exe -m compileall -q .
+git status
+git diff
+git add <files-you-intentionally-changed>
+git commit -m "Describe the API change"
+git push origin main
+```
+
+Do not commit `.env`, uploaded files, database dumps, private keys, or passwords.
+
+### 9.2 Deploy an ordinary API-code change
+
+Connect as the non-root deployment user and verify that the server checkout has
+no accidental edits:
+
 ```bash
+ssh deploy@YOUR_HOSTINGER_IP
 cd /srv/apps/upmart-api
+git status --short
 git pull --ff-only
-docker compose up -d --build
+docker compose up -d --build --no-deps api
 docker compose ps
 docker compose logs --tail=100 api
+curl --fail https://api.upmart.co.in/health
+```
+
+`git status --short` must be empty before pulling. Stop and investigate if it
+shows server-side source edits. The API container is replaced, while PostgreSQL
+and both persistent volumes remain untouched. A brief API interruption is
+possible because KVM 1 runs one application worker.
+
+### 9.3 Dependency, Dockerfile, or Compose changes
+
+For `requirements.txt` or `Dockerfile`, use the same API-only command:
+
+```bash
+docker compose up -d --build --no-deps api
+```
+
+For `compose.yml`, validate and reconcile the complete project:
+
+```bash
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+```
+
+For `.env` changes, edit the server-only file, validate Compose, and recreate
+the affected service. Never replace existing secrets unintentionally:
+
+```bash
+nano .env
+chmod 600 .env
+docker compose config --quiet
+docker compose up -d --force-recreate --no-deps api
+```
+
+### 9.4 Database-model or schema changes
+
+`Base.metadata.create_all()` creates missing tables but does not safely alter
+existing columns. A model change therefore requires a reviewed migration script
+(or Alembic migration) committed with the release.
+
+Before applying a migration, create an off-container database backup:
+
+```bash
+mkdir -p /srv/backups/upmart-api
+docker compose exec -T db pg_dump -U upmart_user -d upmart | gzip > /srv/backups/upmart-api/pre-migration-$(date +%F-%H%M).sql.gz
+```
+
+After pulling/building, run the specific reviewed migration once, for example:
+
+```bash
+docker compose exec api python migrate_example.py
+```
+
+Replace `migrate_example.py` with the migration delivered by that release. Do
+not rerun `seed.py`, do not use `drop_all()`, and do not improvise production SQL.
+
+### 9.5 Verify and roll back
+
+After every release, check the public health endpoint and exercise the changed
+API from the relevant frontend. Watch logs while testing:
+
+```bash
+docker compose logs -f --tail=100 api
+```
+
+Use `Ctrl+C` to stop following logs; it does not stop the container.
+
+If a code-only release is faulty, revert its Git commit on the development
+machine, push the revert, and run the normal deployment again. If a database
+migration ran, do not roll back code independently unless that migration was
+explicitly designed to be backward-compatible.
+
+### 9.6 Cleanup rules
+
+After a successful release, optional image cleanup is safe:
+
+```bash
 docker image prune -f
 ```
 
-Never run `docker compose down -v`; `-v` deletes the persistent volumes.
+Never run `docker compose down -v`; `-v` deletes the database and upload
+volumes. Never expose ports 5432 or 8000 publicly, and never deploy as root.
 
 ## 10. Backup and restore
 
