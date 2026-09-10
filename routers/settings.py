@@ -16,6 +16,7 @@ DEFAULT_SETTINGS = {
     "instagram": "https://instagram.com/upmart",
     "twitter": "https://twitter.com/upmart",
     "youtube": "https://youtube.com/upmart",
+    "whatsappNumber": "919876543210",
     "address": "123 Business Park, Sector 62",
     "city": "Noida",
     "state": "Uttar Pradesh",
